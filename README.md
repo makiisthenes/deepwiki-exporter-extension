@@ -15,6 +15,20 @@ It supports both normal [DeepWiki](https://deepwiki.com) pages and DeepWiki-styl
 - **Private by design** — conversion runs locally in the browser. The extension does not send content to an external server.
 - **Offline ZIP packaging** — JSZip is bundled locally; no CDN code is loaded at runtime.
 
+## Screenshots
+
+### Extension popup
+
+![DeepWiki Exporter popup](images/UI.png)
+
+### Source DeepWiki page
+
+![DeepWiki source page](images/deepwiki-github.png)
+
+### Exported Markdown output
+
+![Exported Markdown output](images/deepwiki-markdown.png)
+
 ## Install from GitHub
 
 This extension is intended to be installed as an unpacked extension.
