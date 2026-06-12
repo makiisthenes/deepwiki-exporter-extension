@@ -1,0 +1,20 @@
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local archives/build output
+*.zip
+dist/
+build/
+release/
+
+# Temporary/runtime files
+*.log
+*.tmp
+.env
+
+# Dependency caches if local tooling is added later
+node_modules/
+.cache/

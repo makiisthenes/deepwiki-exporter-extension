@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "DeepWiki Exporter",
+  "version": "1.0.0",
+  "description": "Export DeepWiki and Devin wiki pages to Markdown, including full-wiki ZIP downloads.",
+  "permissions": [
+    "downloads",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://deepwiki.com/*",
+    "https://app.devin.ai/*"
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "128": "icons/icon128.png",
+    "192": "icons/icon192.png",
+    "512": "icons/icon512.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://deepwiki.com/*",
+        "https://app.devin.ai/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
