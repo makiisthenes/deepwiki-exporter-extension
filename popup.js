@@ -69,11 +69,11 @@ document.addEventListener('DOMContentLoaded', () => {
         currentTitle = response.markdownTitle;
         currentHeadTitle = response.headTitle || '';
         
-        // Create filename with head title and content title
-        const rawName = currentHeadTitle 
-          ? `${currentHeadTitle}-${currentTitle}` 
-          : `${currentTitle}`;
-        const fileName = `${sanitizeFilename(rawName)}.md`;
+        // Use only the article title for the filename.
+        // headTitle is the browser-tab title (includes site name / repo name)
+        // and prepending it duplicates the page name when the tab title starts
+        // with the article name (e.g. "Overview | Repo - Devin" + "Overview").
+        const fileName = `${sanitizeFilename(currentTitle)}.md`;
         
         // Automatically download after successful conversion
         const blob = new Blob([currentMarkdown], { type: 'text/markdown' });
@@ -244,6 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (convertResponse && convertResponse.success) {
           convertedPages.push({
             title: sanitizeFilename(convertResponse.markdownTitle || page.title),
+            path: (page.path || []).map(p => sanitizeFilename(p)),
             content: convertResponse.markdown
           });
           processedCount++;
@@ -264,30 +265,58 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
   
-  // Package all pages into a ZIP file for download
+  // Package all pages into a ZIP file for download, preserving the sidebar's
+  // folder hierarchy. Each page's `path` array (e.g. ['Architecture', 'Backend'])
+  // maps directly to subdirectories inside the ZIP.
   async function downloadAllPagesAsZip(folderName) {
     try {
       showStatus('Creating ZIP file...', 'info');
       
-      // Create new JSZip instance
       const zip = new JSZip();
-      
-      // Create index file
-      let indexContent = `# ${folderName}\n\n## Content Index\n\n`;
+
+      // ── Build ZIP entries & README index ────────────────────────────────
+      // We group pages by their path so the README reflects the hierarchy.
+      // sectionMap: folderKey → { label, pages: [], children: sectionMap }
+      const root = { pages: [], children: {} };
+
       convertedPages.forEach(page => {
-        indexContent += `- [${page.title}](${page.title}.md)\n`;
+        const pathParts = page.path || [];    // already sanitized
+        const safeTitle = page.title;         // already sanitized
+
+        // Place the file in the correct subdirectory
+        const zipFilePath = [...pathParts, `${safeTitle}.md`].join('/');
+        zip.file(zipFilePath, page.content);
+
+        // Register in the section tree for README generation
+        let node = root;
+        for (const part of pathParts) {
+          if (!node.children[part]) node.children[part] = { pages: [], children: {} };
+          node = node.children[part];
+        }
+        node.pages.push({ title: page.title, zipFilePath });
       });
-      
-      // Add index file to zip
+
+      // ── Recursively build the README ─────────────────────────────────────
+      function buildIndex(node, depth) {
+        let out = '';
+        const indent = '  '.repeat(depth);
+        // Pages at this level
+        for (const p of node.pages) {
+          out += `${indent}- [${p.title}](${p.zipFilePath})\n`;
+        }
+        // Child sections
+        for (const [sectionName, child] of Object.entries(node.children)) {
+          out += `${indent}- **${sectionName}**\n`;
+          out += buildIndex(child, depth + 1);
+        }
+        return out;
+      }
+
+      const indexContent =
+        `# ${folderName}\n\n## Contents\n\n` + buildIndex(root, 0);
       zip.file('README.md', indexContent);
-      
-      // Add all Markdown files to zip
-      convertedPages.forEach(page => {
-        const safeTitle = sanitizeFilename(page.title);
-        zip.file(`${safeTitle}.md`, page.content);
-      });
-      
-      // Generate zip file
+
+      // ── Generate & download ──────────────────────────────────────────────
       showStatus('Compressing files...', 'info');
       const zipContent = await zip.generateAsync({
         type: 'blob',
@@ -295,17 +324,16 @@ document.addEventListener('DOMContentLoaded', () => {
         compressionOptions: { level: 9 }
       });
       
-      // Download zip file
       const zipUrl = URL.createObjectURL(zipContent);
       chrome.downloads.download({
         url: zipUrl,
-        filename: `${sanitizeFilename(folderName)}.zip`,
+        filename: `${sanitizeFilename(folderName)}_deepwiki_pages.zip`,
         saveAs: true
-      }, () => {
+      }, (downloadId) => {
         if (chrome.runtime.lastError) {
           showStatus('Error downloading ZIP file: ' + chrome.runtime.lastError.message, 'error');
         } else {
-          showStatus(`ZIP file successfully generated! Contains ${convertedPages.length} Markdown files`, 'success');
+          showStatus(`ZIP downloaded! ${convertedPages.length} files across ${Object.keys(root.children).length} sections`, 'success');
         }
       });
       

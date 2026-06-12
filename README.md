@@ -8,6 +8,7 @@ It supports both normal [DeepWiki](https://deepwiki.com) pages and DeepWiki-styl
 
 - **Current-page export** — save the page you are viewing as a Markdown file.
 - **Full-wiki export** — crawl the sidebar and download a ZIP containing all exported Markdown pages.
+- **Folder-preserving ZIPs** — mirrors nested sidebar sections as subdirectories and generates a hierarchical `README.md` index.
 - **Devin wiki support** — handles Devin's single-page app wiki UI by clicking real sidebar entries instead of guessing URLs.
 - **Nested sidebar support** — expands collapsed sections before batch export.
 - **Lazy-content support** — scrolls pages so lazy-rendered sections, images, and diagrams have a chance to load before export.
@@ -71,8 +72,8 @@ After pulling updates, return to the extensions page and click the extension car
 
 The ZIP contains:
 
-- one Markdown file per exported wiki page
-- a generated `README.md` index linking to each exported file
+- one Markdown file per exported wiki page, arranged into subfolders that mirror the source sidebar hierarchy when available
+- a generated hierarchical `README.md` index linking to each exported file
 
 You can click **Cancel Batch Operation** to stop a batch run early.
 

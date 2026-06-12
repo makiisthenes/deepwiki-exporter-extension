@@ -26,10 +26,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       
       let pages;
       if (sidebarLinkElements.length > 0) {
-        // deepwiki.com structure: anchor tags with href attributes
+        // deepwiki.com structure: anchor tags with href attributes.
+        // Walk each link's ancestor <li> chain to build a folder breadcrumb.
         pages = sidebarLinkElements.map(link => ({
           url: new URL(link.getAttribute('href'), baseUrl).href,
           title: link.textContent.trim(),
+          path: getDeepwikiBreadcrumb(link),
           selected: link.getAttribute('data-selected') === 'true'
         }));
       } else {
@@ -80,6 +82,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               // url kept only as a fallback; Devin batch uses in-page clicks
               url: `${wikiRootUrl}/${slug}${queryString}`,
               title: label,
+              path: getDevinPageBreadcrumb(btn),
               index,
               selected: isActive
             };
@@ -186,6 +189,57 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Always return true for asynchronous sendResponse handling
   return true;
 });
+
+// Return the folder breadcrumb for a deepwiki.com sidebar link by walking up
+// the ancestor <li> chain. Each enclosing <li> that has a sub-<ul> (making it
+// a group, not a leaf) contributes its visible text as a path segment.
+function getDeepwikiBreadcrumb(anchorEl) {
+  const path = [];
+  let li = anchorEl.closest('li');
+  while (li) {
+    const parentUl = li.parentElement;
+    if (!parentUl || parentUl.tagName !== 'UL') break;
+    const parentLi = parentUl.parentElement;
+    if (!parentLi || parentLi.tagName !== 'LI') break;
+
+    // Collect text from the parent <li> that is NOT inside a nested <ul>/<ol>
+    // (those are the child list entries, not the section heading).
+    let label = '';
+    for (const node of parentLi.childNodes) {
+      const tag = node.tagName;
+      if (tag === 'UL' || tag === 'OL') continue;
+      label += (node.textContent || '').trim() + ' ';
+    }
+    label = label.trim();
+    if (label) path.unshift(label);
+    li = parentLi;
+  }
+  return path;
+}
+
+// Return the folder breadcrumb for a Devin wiki sidebar button by walking up
+// through sidebar-menu-sub ancestor elements. Each sub contributes its parent
+// menu-button label as a path segment, building deepest-first then reversing.
+function getDevinPageBreadcrumb(btn) {
+  const path = [];
+  let menuItem = btn.closest('[data-slot="sidebar-menu-item"]');
+  while (menuItem) {
+    // Is this item nested inside a sidebar-menu-sub?
+    const parentSub = menuItem.parentElement?.closest('[data-slot="sidebar-menu-sub"]');
+    if (!parentSub) break;
+    // The sidebar-menu-item that owns this sub (the parent group header).
+    const parentMenuItem = parentSub.closest('[data-slot="sidebar-menu-item"]');
+    if (!parentMenuItem || parentMenuItem === menuItem) break;
+    const parentBtn =
+      parentMenuItem.querySelector('[data-slot="sidebar-menu-button"] button[aria-label]') ||
+      parentMenuItem.querySelector('button[aria-label]');
+    if (parentBtn) {
+      path.unshift(parentBtn.getAttribute('aria-label').trim());
+    }
+    menuItem = parentMenuItem;
+  }
+  return path;
+}
 
 // Expand every collapsed/nested section in the Devin sidebar so that all wiki
 // pages become visible before we enumerate them. Devin's sidebar is built on
