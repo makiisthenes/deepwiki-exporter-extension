@@ -12,7 +12,8 @@ It supports both normal [DeepWiki](https://deepwiki.com) pages and DeepWiki-styl
 - **Devin wiki support** — handles Devin's single-page app wiki UI by clicking real sidebar entries instead of guessing URLs.
 - **Nested sidebar support** — expands collapsed sections before batch export.
 - **Lazy-content support** — scrolls pages so lazy-rendered sections, images, and diagrams have a chance to load before export.
-- **Mermaid-aware output** — preserves Mermaid/diagram content as Markdown code blocks where possible.
+- **Mermaid-aware output** — preserves available Mermaid source or reconstructs supported rendered diagrams, including standalone Devin diagrams. Other rendered Mermaid SVGs are embedded as self-contained images (requires a Markdown viewer that supports SVG data URLs).
+- **Code fidelity** — preserves code indentation, blank lines, language hints, and embedded backticks, including code containers with SVG toolbar icons.
 - **Private by design** — conversion runs locally in the browser. The extension does not send content to an external server.
 - **Offline ZIP packaging** — JSZip is bundled locally; no CDN code is loaded at runtime.
 
@@ -52,6 +53,8 @@ This extension is intended to be installed as an unpacked extension.
 6. Pin **DeepWiki Exporter** to your toolbar.
 
 After pulling updates, return to the extensions page and click the extension card's **Reload** button.
+
+Version 1.1.1 and later check the page's exporter script version before each operation and inject the current script when needed. This prevents already-open wiki tabs from exporting with an older converter. In Edge, verify the loaded extension's version is **1.1.1** or later at `edge://extensions` after reloading.
 
 ## Usage
 
@@ -131,8 +134,11 @@ Useful local checks:
 node --check background.js
 node --check popup.js
 node --check content.js
+node --test tests/popup.test.js
 python -m json.tool manifest.json
 ```
+
+Open [the browser regression tests](tests/content.test.html) in Chrome or Edge to run the DOM extraction checks. All entries should report `"passed": true`; no dependency installation or server is required.
 
 If you change content extraction logic, test both:
 

@@ -1,5 +1,9 @@
-// Listen for messages from popup
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+if (globalThis.deepwikiExporterMessageHandler) {
+  chrome.runtime.onMessage.removeListener(globalThis.deepwikiExporterMessageHandler);
+}
+globalThis.deepwikiExporterVersion = "1.1.1";
+globalThis.deepwikiExporterMessageHandler = (message, sender, sendResponse) => {
+  const request = message.action === 'deepwikiExporterRequest' ? message.request : message;
   if (request.action === "convertToMarkdown") {
     (async () => {
       try {
@@ -188,7 +192,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   // Always return true for asynchronous sendResponse handling
   return true;
-});
+};
+chrome.runtime.onMessage.addListener(globalThis.deepwikiExporterMessageHandler);
 
 // Return the folder breadcrumb for a deepwiki.com sidebar link by walking up
 // the ancestor <li> chain. Each enclosing <li> that has a sub-<ul> (making it
@@ -420,8 +425,7 @@ async function convertCurrentPageToMarkdown() {
     markdown += processNode(child);
   });
 
-  // Normalize blank lines
-  markdown = markdown.trim().replace(/\n{3,}/g, "\n\n");
+  markdown = markdown.trim();
 
   return { markdown, markdownTitle, headTitle: formattedHeadTitle };
 }
@@ -459,7 +463,9 @@ function convertFlowchartSvgToMermaidText(svgElement) {
             }
         }
         
-        let mermaidId = svgId.replace(/^flowchart-/, '').replace(/-\d+$/, '');
+        const localId = svgId.startsWith(svgElement.id + '-')
+          ? svgId.slice(svgElement.id.length + 1) : svgId;
+        let mermaidId = localId.replace(/^flowchart-/, '').replace(/-\d+$/, '');
 
         const bbox = nodeEl.getBoundingClientRect();
         if (bbox.width > 0 || bbox.height > 0) {
@@ -536,8 +542,8 @@ function convertFlowchartSvgToMermaidText(svgElement) {
     svgElement.querySelectorAll('g.edgeLabel').forEach(labelEl => {
         const text = labelEl.textContent?.trim();
         const bbox = labelEl.getBoundingClientRect();
-        if(text) {
-             edgeLabels[labelEl.id] = {
+           if(text) {
+             edgeLabels[labelEl.getAttribute('data-id') || labelEl.id || `label-${Object.keys(edgeLabels).length}`] = {
                 text,
                 x: bbox.left + bbox.width / 2,
                 y: bbox.top + bbox.height / 2
@@ -546,7 +552,8 @@ function convertFlowchartSvgToMermaidText(svgElement) {
     });
   
   svgElement.querySelectorAll('path.flowchart-link').forEach(path => {
-        const pathId = path.id;
+        const pathId = path.getAttribute('data-id') ||
+          (path.id.startsWith(svgElement.id + '-') ? path.id.slice(svgElement.id.length + 1) : path.id);
     if (!pathId) return;
     
     let sourceNode = null;
@@ -1635,6 +1642,31 @@ function convertStateDiagramSvgToMermaidText(svgElement) {
     return '```mermaid\n' + mermaidCode.trim() + '\n```';
 }
 // Helper function: recursively process nodes
+function formatCodeBlock(text, language = "") {
+  const backticks = text.match(/`+/g) || [];
+  const fence = "`".repeat(Math.max(3, ...backticks.map(run => run.length + 1)));
+  return `${fence}${language}\n${text.replace(/^\r?\n/, "").replace(/\r?\n$/, "")}\n${fence}\n\n`;
+}
+
+function processDiagramSvg(svgElement) {
+  const type = `${svgElement.getAttribute('aria-roledescription') || ''} ${svgElement.getAttribute('class') || ''}`.toLowerCase();
+  let markdown = null;
+  try {
+    if (type.includes('flowchart')) markdown = convertFlowchartSvgToMermaidText(svgElement);
+    else if (type.includes('class')) markdown = convertClassDiagramSvgToMermaidText(svgElement);
+    else if (type.includes('sequence')) markdown = convertSequenceDiagramSvgToMermaidText(svgElement);
+    else if (type.includes('state')) markdown = convertStateDiagramSvgToMermaidText(svgElement);
+  } catch (error) {
+    console.warn("Could not reconstruct diagram source:", error);
+  }
+  if (markdown) return `${markdown}\n\n`;
+  const svg = svgElement.cloneNode(true);
+  svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  const source = new XMLSerializer().serializeToString(svg);
+  const bytes = Array.from(new TextEncoder().encode(source), byte => String.fromCharCode(byte)).join('');
+  return `![Diagram](data:image/svg+xml;base64,${btoa(bytes)})\n\n`;
+}
+
 function processNode(node) {
   // console.log("processNode START:", node.nodeName, node.nodeType, node.textContent ? node.textContent.substring(0,50) : ''); // DEBUG
   let resultMd = "";
@@ -1659,16 +1691,26 @@ function processNode(node) {
     return "";
   }
 
-  if (element.matches('button, [role="button"], nav, footer, aside, script, style, noscript, iframe, embed, object, header')) { // Added header to general skip
+  if (element.matches('button, [role="button"]')) {
+    const diagram = element.querySelector('svg[aria-roledescription], svg[id^="mermaid"]');
+    return diagram ? processDiagramSvg(diagram) : "";
+  }
+  if (element.matches('nav, footer, aside, script, style, noscript, iframe, embed, object, header')) { // Added header to general skip
       return "";
   }
-  if (element.classList.contains("bg-input-dark") && element.querySelector("svg")){ // Your specific rule
-    return "";
-  }
-
-
   // Main logic wrapped in try...catch to catch errors when processing specific nodes
   try {
+    if (element.matches('[data-mermaid], [data-mermaid-source]')) {
+      const source = element.getAttribute('data-mermaid-source') || element.getAttribute('data-mermaid');
+      if (source) return formatCodeBlock(source, 'mermaid');
+    }
+    if (element.localName === 'svg') {
+      if (element.matches('[aria-roledescription], [id^="mermaid"], .flowchart, .sequenceDiagram, .classDiagram, .statediagram') ||
+          element.closest('.mermaid, [data-type="mermaid"]')) {
+        return processDiagramSvg(element);
+      }
+      return "";
+    }
     switch (element.nodeName) {
       case "P": {
         let txt = "";
@@ -1695,8 +1737,7 @@ function processNode(node) {
         let list = "";
         // Determine if it is a source-related ul
         const isSourceList = (
-          (element.previousElementSibling && /source/i.test(element.previousElementSibling.textContent)) ||
-          (element.parentElement && /source/i.test(element.parentElement.textContent)) ||
+          (element.previousElementSibling && /^sources?:?\s*$/i.test(element.previousElementSibling.textContent.trim())) ||
           element.classList.contains('source-list')
         );
         element.querySelectorAll(":scope > li").forEach((li) => {
@@ -1707,7 +1748,7 @@ function processNode(node) {
           } else {
             liTxt = liTxt.trim().replace(/\n\n$/, "").replace(/^\n\n/, "");
           }
-          if (liTxt) list += `* ${liTxt}\n`;
+          if (liTxt) list += `* ${liTxt.replace(/\n/g, '\n  ')}\n`;
         });
         resultMd = list + (list ? "\n" : "");
         break;
@@ -1717,8 +1758,7 @@ function processNode(node) {
         let i = 1;
         // Determine if it is a source-related ol
         const isSourceList = (
-          (element.previousElementSibling && /source/i.test(element.previousElementSibling.textContent)) ||
-          (element.parentElement && /source/i.test(element.parentElement.textContent)) ||
+          (element.previousElementSibling && /^sources?:?\s*$/i.test(element.previousElementSibling.textContent.trim())) ||
           element.classList.contains('source-list')
         );
         element.querySelectorAll(":scope > li").forEach((li) => {
@@ -1730,7 +1770,8 @@ function processNode(node) {
             liTxt = liTxt.trim().replace(/\n\n$/, "").replace(/^\n\n/, "");
           }
           if (liTxt) {
-            list += `${i}. ${liTxt}\n`;
+            const indent = ' '.repeat(String(i).length + 2);
+            list += `${i}. ${liTxt.replace(/\n/g, '\n' + indent)}\n`;
             i++;
           }
         });
@@ -1738,55 +1779,21 @@ function processNode(node) {
         break;
       }
       case "PRE": {
-        const svgElement = element.querySelector('svg[id^="mermaid-"]');
-        let mermaidOutput = null;
-
-        if (svgElement) {
-          const diagramTypeDesc = svgElement.getAttribute('aria-roledescription');
-          const diagramClass = svgElement.getAttribute('class');
-
-          console.log("Found SVG in PRE: desc=", diagramTypeDesc, "class=", diagramClass); // DEBUG
-          if (diagramTypeDesc && diagramTypeDesc.includes('flowchart')) {
-            console.log("Trying to convert flowchart..."); // DEBUG
-            mermaidOutput = convertFlowchartSvgToMermaidText(svgElement);
-          } else if (diagramTypeDesc && diagramTypeDesc.includes('class')) {
-            console.log("Trying to convert class diagram..."); // DEBUG
-            mermaidOutput = convertClassDiagramSvgToMermaidText(svgElement);
-          } else if (diagramTypeDesc && diagramTypeDesc.includes('sequence')) {
-            console.log("Trying to convert sequence diagram..."); // DEBUG
-            mermaidOutput = convertSequenceDiagramSvgToMermaidText(svgElement);
-          } else if (diagramTypeDesc && diagramTypeDesc.includes('stateDiagram')) {
-            console.log("Trying to convert state diagram..."); // DEBUG
-            mermaidOutput = convertStateDiagramSvgToMermaidText(svgElement);
-          } else if (diagramClass && diagramClass.includes('flowchart')) {
-              console.log("Trying to convert flowchart by class..."); // DEBUG
-              mermaidOutput = convertFlowchartSvgToMermaidText(svgElement);
-          } else if (diagramClass && (diagramClass.includes('classDiagram') || diagramClass.includes('class'))) {
-              console.log("Trying to convert class diagram by class..."); // DEBUG
-              mermaidOutput = convertClassDiagramSvgToMermaidText(svgElement);
-          } else if (diagramClass && (diagramClass.includes('sequenceDiagram') || diagramClass.includes('sequence'))) {
-              console.log("Trying to convert sequence diagram by class..."); // DEBUG
-              mermaidOutput = convertSequenceDiagramSvgToMermaidText(svgElement);
-          } else if (diagramClass && (diagramClass.includes('statediagram') || diagramClass.includes('stateDiagram'))) {
-              console.log("Trying to convert state diagram by class..."); // DEBUG
-              mermaidOutput = convertStateDiagramSvgToMermaidText(svgElement);
-          }
-          
-          if (mermaidOutput) {
-            console.log("Successfully converted SVG to mermaid:", mermaidOutput.substring(0, 100) + "..."); // DEBUG
-          } else {
-            console.log("Failed to convert SVG, using fallback"); // DEBUG
-          }
-        }
-
-        if (mermaidOutput) {
-          resultMd = `\n${mermaidOutput}\n\n`;
-        } else {
+        const svgElement = element.querySelector('svg[aria-roledescription], svg[id^="mermaid"], .mermaid svg');
+        const sourceCode = element.querySelector('code.language-mermaid, code[data-language="mermaid"]');
+        if (sourceCode) return formatCodeBlock(sourceCode.textContent, 'mermaid');
+        if (svgElement) return processDiagramSvg(svgElement);
+        {
           const code = element.querySelector("code");
-          let lang = "";
+          let lang = element.getAttribute('data-language') ||
+            element.closest('[data-code-block][data-language]')?.getAttribute('data-language') || "";
           let txt = "";
           if (code) {
-            txt = code.textContent;
+            const lines = code.querySelectorAll(':scope > div');
+            txt = lines.length
+              ? Array.from(lines, line => line.textContent).join('\n')
+              : code.textContent;
+            lang = code.getAttribute('data-language') || lang;
             const cls = Array.from(code.classList).find((c) => c.startsWith("language-"));
             if (cls) lang = cls.replace("language-", "");
           } else {
@@ -1800,7 +1807,7 @@ function processNode(node) {
           if (!lang && txt.trim()) {
             lang = detectCodeLanguage(txt);
           }
-          resultMd = `\`\`\`${lang}\n${txt.trim()}\n\`\`\`\n\n`;
+          resultMd = formatCodeBlock(txt, lang);
         }
         break;
       }
@@ -1928,6 +1935,11 @@ function processNode(node) {
       case "CODE": {
           if (element.parentNode && element.parentNode.nodeName === 'PRE') {
               return element.textContent;
+          }
+          const language = element.getAttribute('data-language') ||
+          Array.from(element.classList).find(name => name.startsWith('language-'))?.slice(9);
+          if (language || element.textContent.includes('\n')) {
+            return formatCodeBlock(element.textContent, language || '');
           }
           return `\`${element.textContent.trim()}\``; // Return directly
       }

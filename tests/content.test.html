@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Markdown extraction regression tests</title>
+<body>
+<pre id="results"></pre>
+<div id="fixture" class="prose-main"></div>
+<script>
+  globalThis.chrome = { runtime: { onMessage: { addListener() {} }, sendMessage() {} } };
+</script>
+<script src="../content.js"></script>
+<script>
+  const results = [];
+  const fixture = document.getElementById('fixture');
+  function test(name, run) {
+    try { run(); results.push({ name, passed: true }); }
+    catch (error) { results.push({ name, passed: false, error: error.message }); }
+  }
+  function assert(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+  function convert(html) {
+    fixture.innerHTML = html;
+    return Array.from(fixture.childNodes, processNode).join('');
+  }
+  test('Code container with SVG copy icon is not discarded', () => {
+    const markdown = convert('<div class="bg-input-dark"><button>Copy<svg></svg></button><pre><code class="language-python">    print("hello")\n\n\n    pass</code></pre></div>');
+    assert(markdown.includes('```python\n    print("hello")\n\n\n    pass\n```'), markdown);
+    assert(!markdown.includes('Copy'), markdown);
+  });
+  test('Standalone Mermaid source is preserved without toolbar labels', () => {
+    const markdown = convert('<div data-mermaid-source="graph LR; A-->B"><button>Diagram</button><svg></svg></div>');
+    assert(markdown === '```mermaid\ngraph LR; A-->B\n```\n\n', markdown);
+  });
+  test('Standalone rendered flowchart is converted once', () => {
+    const markdown = convert('<div class="bg-input-dark"><button>Code</button><svg aria-roledescription="flowchart-v2"><g class="node" id="flowchart-A-0"><rect width="50" height="30"></rect><text>Hello</text></g></svg></div>');
+    assert(markdown.includes('```mermaid') && markdown.includes('Hello'), markdown);
+    assert(markdown.split('```mermaid').length === 2, markdown);
+    assert(!markdown.includes('Code'), markdown);
+  });
+  test('Unsupported diagram is retained as a self-contained SVG image', () => {
+    const markdown = convert('<div class="mermaid"><svg aria-roledescription="er"><text>Entity</text></svg></div>');
+    assert(markdown.startsWith('![Diagram](data:image/svg+xml;base64,'), markdown);
+    const source = atob(markdown.match(/base64,([^)]*)/)[1]);
+    assert(source.includes('Entity') && source.includes('xmlns='), source);
+  });
+  test('Original Mermaid source takes precedence over rendered SVG', () => {
+    const markdown = convert('<pre><code class="language-mermaid">graph TD; A-->B</code><svg aria-roledescription="flowchart"></svg></pre>');
+    assert(markdown === '```mermaid\ngraph TD; A-->B\n```\n\n', markdown);
+  });
+  test('Embedded backticks cannot close the exported code fence', () => {
+    const markdown = formatCodeBlock('```js\nhello\n```', 'markdown');
+    assert(markdown.startsWith('````markdown\n') && markdown.endsWith('\n````\n\n'), markdown);
+  });
+  test('Code language data attributes and blocks without PRE are supported', () => {
+    const markdown = convert('<div><code data-language="javascript">const value = 1;\nvalue++;</code></div>');
+    assert(markdown.includes('```javascript\nconst value = 1;\nvalue++;\n```'), markdown);
+  });
+  test('DeepWiki PRE code and inline code remain supported', () => {
+    const markdown = convert('<p>Use <code>value</code>.</p><pre><code class="language-js">const value = 1;</code></pre>');
+    assert(markdown.includes('Use `value`.') && markdown.includes('```js\nconst value = 1;'), markdown);
+  });
+  test('Saved Devin markup preserves per-line DIVs and wrapper language', () => {
+    const markdown = convert('<div data-code-block="true" data-language="xml"><div role="toolbar"><button>Copy<svg></svg></button></div><pre><code class="block"><div class="flex"><span>&lt;configuration&gt;</span></div><div class="flex"><span>  &lt;packageSources /&gt;</span></div><div class="flex"><span></span></div><div class="flex"><span>&lt;/configuration&gt;</span></div></code></pre></div>');
+    assert(markdown.includes('```xml\n<configuration>\n  <packageSources />\n\n</configuration>\n```'), markdown);
+    assert(!markdown.includes('Copy'), markdown);
+  });
+  test('Devin-prefixed node IDs resolve edges through data-id', () => {
+    const markdown = convert('<svg id="mermaid-example" aria-roledescription="flowchart-v2"><g class="node" id="mermaid-example-flowchart-A-0"><rect width="50" height="30"></rect><text>Start</text></g><g class="node" id="mermaid-example-flowchart-B-1"><rect width="50" height="30"></rect><text>End</text></g><path class="flowchart-link" id="mermaid-example-L_A_B_0" data-id="L_A_B_0" d="M0,0 L50,50"></path></svg>');
+    assert(markdown.includes('A --> B'), markdown);
+  });
+  test('Clickable Devin diagram containers are not skipped as toolbar buttons', () => {
+    const markdown = convert('<div role="button" tabindex="0"><div><svg id="mermaid-clickable" aria-roledescription="flowchart-v2"><g class="node" id="mermaid-clickable-flowchart-A-0"><rect width="50" height="30"></rect><text>Diagram content</text></g></svg></div></div>');
+    assert(markdown.includes('```mermaid') && markdown.includes('Diagram content'), markdown);
+  });
+  test('Source mentions do not flatten fenced code inside ordered lists', () => {
+    const markdown = convert('<div><p>Source files</p><ol><li><p>Run locally:</p><div data-code-block="true" data-language="powershell"><pre><code><div>cd src/CWorker.Web</div><div>npm run dev</div></code></pre></div></li></ol></div>');
+    assert(markdown.includes('\n   ```powershell\n   cd src/CWorker.Web\n   npm run dev\n   ```'), markdown);
+  });
+  test('Large Unicode SVG fallback does not overflow the argument stack', () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.textContent = '\u56fe'.repeat(100000);
+    assert(processDiagramSvg(svg).startsWith('![Diagram](data:image/svg+xml;base64,'), 'Missing SVG');
+  });
+  (async () => {
+    const originalEnsureLoaded = ensureContentFullyLoaded;
+    ensureContentFullyLoaded = async () => {};
+    try {
+      fixture.innerHTML = '<h1>Example</h1><pre><code class="language-python">    first()\n\n\n    second()</code></pre>';
+      const { markdown } = await convertCurrentPageToMarkdown();
+      assert(markdown.includes('    first()\n\n\n    second()'), markdown);
+      results.push({ name: 'Full-page export preserves code blank lines', passed: true });
+    } catch (error) {
+      results.push({ name: 'Full-page export preserves code blank lines', passed: false, error: error.message });
+    } finally {
+      ensureContentFullyLoaded = originalEnsureLoaded;
+    }
+    globalThis.testResults = results;
+    document.getElementById('results').textContent = JSON.stringify(results, null, 2);
+  })();
+</script>
+</body>
+</html>

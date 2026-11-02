@@ -18,3 +18,6 @@ release/
 # Dependency caches if local tooling is added later
 node_modules/
 .cache/
+
+# SpecStory files
+**/.specstory/*

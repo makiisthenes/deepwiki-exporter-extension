@@ -48,21 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       showStatus('Converting page...', 'info');
-      let response;
-      try {
-        response = await chrome.tabs.sendMessage(tab.id, { action: 'convertToMarkdown' });
-      } catch (e) {
-        // Fallback: inject content script then retry
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['content.js']
-          });
-          response = await chrome.tabs.sendMessage(tab.id, { action: 'convertToMarkdown' });
-        } catch (injectErr) {
-          throw injectErr;
-        }
-      }
+      const response = await sendMessageWithInjection(tab.id, { action: 'convertToMarkdown' });
       
       if (response && response.success) {
         currentMarkdown = response.markdown;
@@ -111,18 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       showStatus('Extracting all page links...', 'info');
       
-      // Extract all links first (with injection fallback)
-      let response;
-      try {
-        response = await chrome.tabs.sendMessage(tab.id, { action: 'extractAllPages' });
-      } catch (e) {
-        try {
-          await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
-          response = await chrome.tabs.sendMessage(tab.id, { action: 'extractAllPages' });
-        } catch (injectErr) {
-          throw injectErr;
-        }
-      }
+      const response = await sendMessageWithInjection(tab.id, { action: 'extractAllPages' });
       
       if (response && response.success) {
         allPages = response.pages;
@@ -168,11 +143,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Send a message to the content script, re-injecting it once if the channel
   // is not yet available (e.g. first run before the script is loaded).
   async function sendMessageWithInjection(tabId, message) {
+    const [{ result: version }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => globalThis.deepwikiExporterVersion
+    });
+    if (version !== chrome.runtime.getManifest().version) {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    }
+    const request = { action: 'deepwikiExporterRequest', request: message };
     try {
-      return await chrome.tabs.sendMessage(tabId, message);
+      return await chrome.tabs.sendMessage(tabId, request);
     } catch (e) {
       await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-      return await chrome.tabs.sendMessage(tabId, message);
+      return await chrome.tabs.sendMessage(tabId, request);
     }
   }
 
